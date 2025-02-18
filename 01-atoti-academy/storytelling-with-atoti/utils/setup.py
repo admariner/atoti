@@ -5,7 +5,7 @@ def setup_tables(session):
     product_tbl = session.read_csv(
         "s3://data.atoti.io/atoti-academy/data/Products.csv",
         table_name="Products",
-        types={
+        data_types={
             "ProductId": tt.type.STRING,
         },
         keys=["ProductId"],
@@ -15,7 +15,7 @@ def setup_tables(session):
         "s3://data.atoti.io/atoti-academy/data/Orders.csv",
         table_name="Orders",
         keys=["OrderId", "ProductId"],
-        types={
+        data_types={
             "OrderId": tt.type.STRING,
             "ProductId": tt.type.STRING,
             "EmployeeId": tt.type.STRING,
@@ -35,7 +35,7 @@ def setup_tables(session):
         "s3://data.atoti.io/atoti-academy/data/Employees.csv",
         table_name="Employees",
         keys=["EmployeeId"],
-        types={
+        data_types={
             "EmployeeId": tt.type.STRING,
         },
     )
@@ -44,7 +44,10 @@ def setup_tables(session):
         "s3://data.atoti.io/atoti-academy/data/HistoricalPrices.csv",
         keys=["ProductId"],
         table_name="HistoricalPrices",
-        types={"HistoricalPrice": tt.type.DOUBLE_ARRAY, "ProductId": tt.type.STRING},
+        data_types={
+            "HistoricalPrice": tt.type.DOUBLE_ARRAY,
+            "ProductId": tt.type.STRING,
+        },
     )
 
     shipper_tbl = session.read_csv(
@@ -113,11 +116,12 @@ def create_measures(session):
     )
 
     m["Profit"] = tt.agg.sum(
-        m["ProfitPerUnit"] * m["QuantitySold.SUM"], scope=tt.OriginScope(l["OrderId"])
+        m["ProfitPerUnit"] * m["QuantitySold.SUM"],
+        scope=tt.OriginScope(levels={l["OrderId"]}),
     )
 
     m["Profit.MEAN"] = tt.agg.sum(
-        m["Profit"] / m["QuantitySold.SUM"], scope=tt.OriginScope(l["OrderId"])
+        m["Profit"] / m["QuantitySold.SUM"], scope=tt.OriginScope(levels={l["OrderId"]})
     )
 
     # Compute transport rates
@@ -153,14 +157,14 @@ def create_measures(session):
 
     m["TransportOrdersCount"] = tt.agg.sum(
         tt.where((l["Interval"] == m["Interval"]), 1),
-        scope=tt.OriginScope(l["OrderId"]),
+        scope=tt.OriginScope(levels={l["OrderId"]}),
     )
     m["TransportRate"] = tt.where((l["Interval"] == m["Interval"]), m["ShipperRate"])
 
     m["TransportCost"] = tt.agg.sum_product(
         m["TransportRate"],
         m["QuantitySold.SUM"],
-        scope=tt.OriginScope(l["ShipperName"], l["OrderId"], l["Interval"]),
+        scope=tt.OriginScope(levels={l["ShipperName"], l["OrderId"], l["Interval"]}),
     )
 
     m["ShipperRate"].formatter = "DOUBLE[#,##0.000]"
@@ -178,7 +182,7 @@ def nb2_measures(cube):
     m["Sales"] = tt.agg.sum_product(
         m["QuantitySold.SUM"],
         m["SellingPricePerUnit"],
-        scope=tt.OriginScope(l["ProductId"], l["OrderId"]),
+        scope=tt.OriginScope(levels={l["ProductId"], l["OrderId"]}),
     )
 
     m["ProfitMargin"] = m["Profit"] / m["Sales"]
@@ -236,18 +240,20 @@ def nb3_measures(cube):
 
     # put products level measures into the product folder
     for _m_name in m:
-        if "(Product)" in _m_name:
+        if "(Product)" in _m_name and m[_m_name].visible == True:
             m[_m_name].folder = "Products"
 
 
-def create_app(ses_name="training1", port=9091):
-    session = tt.Session(
-        name=ses_name,
-        user_content_storage=f"./{ses_name}",
-        port=port,
-        java_options=["-Xms1G", "-Xmx8G"],
-        # requires Atoti license
-        # app_extensions=tt.ADVANCED_APP_EXTENSION,
+def create_app(ses_name="training1", port=9095):
+    session = tt.Session.start(
+        tt.SessionConfig(
+            # name=ses_name,
+            user_content_storage=f"./{ses_name}",
+            port=port,
+            java_options=["-Xms1G", "-Xmx8G"],
+            # requires Atoti license
+            # app_extensions=tt.ADVANCED_APP_EXTENSION,
+        )
     )
 
     base_table = setup_tables(session)
